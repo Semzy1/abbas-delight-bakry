@@ -850,9 +850,14 @@
             <h3 class="font-display text-2xl font-bold mb-2">Order Confirmed!</h3>
             <p class="mb-4">Thank you for your order. We'll contact you shortly to confirm details.</p>
             <p class="text-sm text-gray-600 mb-6">Order ID: <span id="confirmed-order-id"></span></p>
-            <button id="close-confirmation" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-2 px-6 rounded-full transition">
-                Continue Shopping
-            </button>
+            <div class="flex justify-center items-center gap-3">
+                <a id="send-order-whatsapp" href="#" target="_blank" rel="noopener noreferrer" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded-full transition">
+                    <i data-feather="message-circle" class="inline mr-2"></i> Send via WhatsApp
+                </a>
+                <button id="close-confirmation" class="bg-amber-500 hover:bg-amber-600 text-black font-bold py-2 px-6 rounded-full transition">
+                    Continue Shopping
+                </button>
+            </div>
         </div>
     </div>
 
@@ -1156,7 +1161,8 @@
                 };
                 
                 let orderSubmitted = false;
-                let createdOrderId = null;
+                    let createdOrderId = null;
+                    let finalOrder = null; // will hold the order object (backend or local) used to build the WhatsApp message
                 
                 try {
                     const response = await fetch('http://localhost:3000/api/orders', {
@@ -1175,10 +1181,27 @@
                             createdOrderId = result.data?.orderId || result.data?.order?.id || null;
                             console.log('Order submitted to backend:', createdOrderId || result.data);
 
-                            // If backend returned a full order payload, keep local copy up-to-date
+                            // If backend returned a full order payload, keep local copy up-to-date and use it as finalOrder
                             if (result.data?.order) {
+                                finalOrder = result.data.order;
                                 orders.unshift(result.data.order);
                                 localStorage.setItem('abbasDelightOrders', JSON.stringify(orders));
+                            } else {
+                                // If backend returned minimal info, populate a small finalOrder to use for the WhatsApp message
+                                finalOrder = {
+                                    id: createdOrderId || ('AD' + Date.now()),
+                                    customerName: orderData.customerName,
+                                    customerPhone: orderData.customerPhone,
+                                    customerEmail: orderData.customerEmail,
+                                    customerAddress: orderData.customerAddress,
+                                    deliveryTime: orderData.deliveryTime,
+                                    specialInstructions: orderData.specialInstructions,
+                                    items: orderData.items,
+                                    total: parseFloat(orderTotal.textContent.replace(/[^0-9.-]+/g, '')) || 0,
+                                    status: 'new',
+                                    timestamp: new Date().toISOString(),
+                                    messages: []
+                                };
                             }
                         }
                     }
@@ -1213,13 +1236,48 @@
                     updateVendorStats();
                     displayVendorOrders();
                     createdOrderId = order.id;
+                    finalOrder = order; // use fallback order as finalOrder
                 }
                 
                 // Show confirmation
                 // Prefer createdOrderId (from backend or local fallback). If not available, fall back to customer name.
                 confirmedOrderId.textContent = createdOrderId || orderData.customerName || 'N/A';
                 orderConfirmation.classList.remove('hidden');
-                
+
+                // Build WhatsApp message link (business number must be in international format without +/- or spaces)
+                try {
+                    const businessNumber = '375255266598';
+                    if (finalOrder) {
+                        const lines = [];
+                        lines.push('New order from Abba\'s Delight');
+                        lines.push(`Order ID: ${finalOrder.id}`);
+                        lines.push(`Customer: ${finalOrder.customerName}`);
+                        lines.push(`Phone: ${finalOrder.customerPhone}`);
+                        lines.push(`Address: ${finalOrder.customerAddress}`);
+                        if (finalOrder.deliveryTime) lines.push(`Delivery: ${new Date(finalOrder.deliveryTime).toLocaleString()}`);
+                        lines.push('Items:');
+                        finalOrder.items.forEach(item => {
+                            let qtyLabel = '';
+                            if (item.packSize) qtyLabel = `${item.quantity} x ${item.packSize} pcs`;
+                            else if (item.unit === 'g') qtyLabel = `${item.quantity}g`;
+                            else qtyLabel = `${item.quantity} ${item.unit || 'pc'}`;
+                            lines.push(`- ${qtyLabel} ${item.name} - ${(item.price * item.quantity).toFixed(2)}₽`);
+                        });
+                        lines.push(`Total: ${ (finalOrder.total || (parseFloat(orderTotal.textContent.replace(/[^0-9.-]+/g, '')) || 0)).toFixed(2) }₽`);
+                        if (finalOrder.specialInstructions) lines.push(`Instructions: ${finalOrder.specialInstructions}`);
+                        lines.push('Thank you!');
+
+                        const message = lines.join('\n');
+                        const waLink = `https://wa.me/${businessNumber}?text=${encodeURIComponent(message)}`;
+                        const waAnchor = document.getElementById('send-order-whatsapp');
+                        if (waAnchor) {
+                            waAnchor.href = waLink;
+                        }
+                    }
+                } catch (e) {
+                    console.error('Failed to build WhatsApp link for order:', e);
+                }
+
                 // Reset cart and form
                 cart.length = 0;
                 updateOrderSummary();
